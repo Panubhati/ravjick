@@ -23,3 +23,13 @@ gives the phase it was made in and how it was checked.
 | A7 | The constant columns `dataset` and `fuelType` are validated, then dropped from the CSVs. | They carry no information after validation. |
 | A8 | The coverage check in ingestion only tests whether data is *available* (at least one publish at or before the cutoff for each target hour). | The per-hour selection is implemented and tested separately in `app/decision.py` (Phase 3). |
 | A9 | The 12:25 publish on 2026-01-15 is a late 11:30 publish. It is kept as-is, with no adjustment. | It is the only publish not at :30, and the 11:30 slot that day is empty. It only changes which forecast is selected for delivery 2026-01-16 at cutoff 12:00. |
+
+## Phase 3: core logic
+
+| # | Assumption | How checked or why |
+|---|---|---|
+| B1 | A WINDFOR value at `startTime` H is the average MW over the hour H to H+1. | Given in spec 5.4. It is the basis for comparing it with the mean of the H and H+30min actuals. |
+| B2 | A forecast can be used the moment it is published. `publish_time <= cutoff` (inclusive) is the only availability test, with no allowance for delivery delay. | Spec 5.2. In this data, the publish used at each cutoff is always at least 0.5 h before it. |
+| B3 | A delivery day is 24 hours, 00:00 to 23:00 UTC. | January has no clock change, so every day has 24 hours. |
+| B4 | A missing forecast hour has `forecast_mw`, `publish_time` and `horizon_h` set to null and `missing = true`. It is never filled from a later publish or by interpolation. | Unit-tested. No hours are missing in January at any cutoff. |
+| B5 | `hourly_actuals` returns rows only for hours that have at least one half-hour. Callers left-join on `target_time`, so hours with no actuals at all also come out as null. | Unit-tested. All 744 January hours are complete. |

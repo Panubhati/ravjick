@@ -73,7 +73,7 @@ Because the publish schedule is fixed, each cutoff maps to one publish on D-1:
 
 This table comes from the publish schedule. The checker confirmed it at
 09:00: every day's latest eligible publish was exactly 1.5 h before the cutoff.
-Phase 3 will confirm it per hour using `decision.py`.
+Phase 3 confirmed it per hour with `decision.py`: all 744 hours at every cutoff use the publish shown (12:00: 720 hours use 11:30, the 24 hours of 2026-01-16 use 09:30).
 
 Consequence for analysis: the 7 cutoffs in the sensitivity analysis only
 produce **4 distinct forecasts** per day. The analysis will be step-shaped and
