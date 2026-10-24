@@ -30,8 +30,9 @@ available at the D-1 decision cutoff and quantifies forecast error.
 - No real names, emails, usernames or employer names in any committed file,
   comment, package metadata or git history. Watch out for local paths like
   `C:\Users\<name>\...` in output files.
-- Git identity is set repo-locally to `wind-portal-dev <dev@example.invalid>`.
-  Don't change it, and don't rely on the global git config.
+- Git identity is set repo-locally to `Panubhati` with the GitHub noreply email
+  (the owner's choice, so commits count for their account). Never use the
+  global git config, which contains a real name and email.
 - Before each commit, grep staged files for personal identifiers.
 - Commit messages: subject + body only. No "Co-Authored-By: Claude" or other AI
   attribution trailer (AI use is stated in the README instead).
@@ -49,8 +50,9 @@ available at the D-1 decision cutoff and quantifies forecast error.
 - Improvement pass (perf, security, UI, honest stats): done.
 - UI wording: spec headings kept exactly; plain-language subtitles, hints, footer (ASSUMPTIONS F12). Do not rename spec headings.
 - Extras: look-ahead check, buffer without hindsight, buy calculator (ASSUMPTIONS G1-G3).
-- Phase 7 (Docker + Vercel config): Docker verified locally; Vercel deploy needs owner login.
-  Next: deploy to Vercel, then Phase 8 (README, CI, hygiene).
+- Phase 7 (Docker + Vercel config): Docker verified locally; Vercel import pending (owner).
+- Phase 8 (README, ARCHITECTURE, CI, audits): done. Add live URL to README after deploy.
+  Next: Phase 9 (docs/VIDEO_SCRIPT.md with real numbers and screens).
 
 Update this section when a phase completes.
 
