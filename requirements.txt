@@ -1,2 +1,8 @@
-# Vercel installs Python dependencies from the project root.
--r backend/requirements.txt
+# Python dependencies for the Vercel function (api/index.py). Vercel cannot
+# follow '-r' includes, so this mirrors backend/requirements.txt exactly;
+# backend/tests/test_requirements.py keeps the two in sync.
+fastapi==0.162.0
+httpx==0.28.1
+pandas==2.3.3
+pydantic==2.14.1
+uvicorn==0.54.0
