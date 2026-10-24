@@ -33,22 +33,24 @@ available at the D-1 decision cutoff and quantifies forecast error.
 - Git identity is set repo-locally to `wind-portal-dev <dev@example.invalid>`.
   Don't change it, and don't rely on the global git config.
 - Before each commit, grep staged files for personal identifiers.
+- Commit messages: subject + body only. No "Co-Authored-By: Claude" or other AI
+  attribution trailer (AI use is stated in the README instead).
 - Phase 1 leftovers (`featch.py`, root `data/`) and the spec `.docx` are
   gitignored on purpose; keep them out of the repo.
 
 ## Status
 
 - Phase 1 (discovery): done.
-- Phase 2 (ingestion): done, commit `6b14483`.
-- Phase 3 (core logic): done, commit `d28d5fe`.
-- Phase 4 (metrics): done, commit `f8853fd`.
-- Phase 5 (API): done, commit `82ed422`.
-- Phase 6 (front end): done, commit `ca86bae`.
-- Improvement pass (perf, security, UI, honest stats): done, commit `c8c20ec`.
+- Phase 2 (ingestion): done.
+- Phase 3 (core logic): done.
+- Phase 4 (metrics): done.
+- Phase 5 (API): done.
+- Phase 6 (front end): done.
+- Improvement pass (perf, security, UI, honest stats): done.
 - UI wording: spec headings kept exactly; plain-language subtitles, hints, footer (ASSUMPTIONS F12). Do not rename spec headings.
 - Extras: look-ahead check, buffer without hindsight, buy calculator (ASSUMPTIONS G1-G3).
-- Next: Phase 7, Docker (multi-stage) + docker-compose + Heroku container deploy
-  (spec Section 12). Server must bind to $PORT (default 8000).
+- Phase 7 (Docker + Vercel config): Docker verified locally; Vercel deploy needs owner login.
+  Next: deploy to Vercel, then Phase 8 (README, CI, hygiene).
 
 Update this section when a phase completes.
 

@@ -1,0 +1,21 @@
+# Keep the build context small and free of local or personal files.
+.git
+.github
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/*.pyc
+backend/tests
+backend/scripts
+docs
+data
+featch.py
+*.docx
+*.md
+.vscode
+.idea
+.env
+.env.*

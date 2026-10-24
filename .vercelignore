@@ -1,0 +1,16 @@
+# Never upload local-only or personal files to Vercel.
+featch.py
+/data/
+*.docx
+.git
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+frontend/dist
+backend/tests
+backend/scripts
+docs
+.env
+.env.*
