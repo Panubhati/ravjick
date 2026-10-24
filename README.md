@@ -7,8 +7,8 @@ moment**, never a newer one that would leak information from the future, and mea
 those forecasts missed in January 2026. From the misses it derives a **shortfall buffer** buyers
 can add as a safety margin. National wind only, Elexon data only.
 
-**Live app:** _link added after deployment_
-· **API docs:** `/docs` on the same host
+**Live app:** https://ravjick.vercel.app
+· **API docs:** https://ravjick.vercel.app/docs
 
 ## What you can do
 
@@ -140,8 +140,9 @@ a Python serverless function with the CSVs bundled (`vercel.json`, `api/index.py
 spec's primary target, no longer has a free plan; `heroku.yml` is included so the same Docker
 image can be deployed there with `heroku stack:set container` and `git push heroku main`.
 
-**First load:** after a period without visitors the function starts cold and the first request
-can take several seconds; the page says so while it waits. Later requests are fast.
+**First load:** after a period without visitors the function starts cold. In testing (from
+outside the US), API calls took about 1–2 s on a cold start and 0.3–1 s once warm; the page
+shows a note if loading takes longer than a few seconds.
 
 ## Known limitations
 

@@ -50,8 +50,8 @@ available at the D-1 decision cutoff and quantifies forecast error.
 - Improvement pass (perf, security, UI, honest stats): done.
 - UI wording: spec headings kept exactly; plain-language subtitles, hints, footer (ASSUMPTIONS F12). Do not rename spec headings.
 - Extras: look-ahead check, buffer without hindsight, buy calculator (ASSUMPTIONS G1-G3).
-- Phase 7 (Docker + Vercel config): Docker verified locally; Vercel import pending (owner).
-- Phase 8 (README, ARCHITECTURE, CI, audits): done. Add live URL to README after deploy.
+- Phase 7: done. Live on Vercel (see README), all checks pass on the live site.
+- Phase 8 (README, ARCHITECTURE, CI, audits): done; live URL in README.
   Next: Phase 9 (docs/VIDEO_SCRIPT.md with real numbers and screens).
 
 Update this section when a phase completes.
