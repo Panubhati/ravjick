@@ -33,3 +33,16 @@ gives the phase it was made in and how it was checked.
 | B3 | A delivery day is 24 hours, 00:00 to 23:00 UTC. | January has no clock change, so every day has 24 hours. |
 | B4 | A missing forecast hour has `forecast_mw`, `publish_time` and `horizon_h` set to null and `missing = true`. It is never filled from a later publish or by interpolation. | Unit-tested. No hours are missing in January at any cutoff. |
 | B5 | `hourly_actuals` returns rows only for hours that have at least one half-hour. Callers left-join on `target_time`, so hours with no actuals at all also come out as null. | Unit-tested. All 744 January hours are complete. |
+
+## Phase 4: metrics
+
+| # | Assumption | How checked or why |
+|---|---|---|
+| C1 | Percentiles and quantiles use linear interpolation (the pandas/numpy default). | Unit tests use hand-computed values with the same method. |
+| C2 | Normalised MAE = MAE / mean actual over the matched hours in the selected range. | Spec 6.1. |
+| C3 | Wind-level terciles are computed from the matched actuals in the selected range, so the thresholds change with the range. Low means actual <= first threshold; medium means actual <= second threshold; high is anything above. | Spec 6.2 asks for the thresholds to be returned, so the UI can show them. |
+| C4 | Horizon buckets include their upper edge, (0, 6], (6, 12] and so on, and 48h+ is anything above 48 h. | All real horizons end in .5 h, so no value falls on an edge. |
+| C5 | The horizon analysis filters on target hours in the date range and ignores the cutoff. | Spec 6.3: it uses all forecast rows, not only the decision forecast. |
+| C6 | The baseline is the actual at the same hour two days earlier. It is compared with the forecast on exactly the same hours. | Spec 6.4. The D-2 actual is fully known at a D-1 morning cutoff. |
+| C7 | The findings describe how consistent the bias is (share of hours and days over-forecast) but include no significance test. | Errors in neighbouring hours are strongly correlated, so a naive test would overstate certainty. The caveat sentence says so. |
+| C8 | `n_missing_actual` counts every hour in the range with no actual, including hours that also have no forecast. | No hours are missing in January, so this has no effect on results. |

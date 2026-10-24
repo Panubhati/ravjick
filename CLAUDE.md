@@ -40,9 +40,10 @@ available at the D-1 decision cutoff and quantifies forecast error.
 
 - Phase 1 (discovery): done.
 - Phase 2 (ingestion): done, commit `6b14483`.
-- Phase 3 (core logic): done. `app/decision.py` and `app/alignment.py`, 34 tests.
-- Next: Phase 4, `backend/app/metrics.py` (spec Section 6), tested on small
-  hand-computed arrays; headline findings go into `docs/DATA_NOTES.md`.
+- Phase 3 (core logic): done, commit `d28d5fe`.
+- Phase 4 (metrics): done. `app/metrics.py`, `app/data_loader.py`, `scripts/analyse.py`.
+- Next: Phase 5, FastAPI endpoints (spec Section 8) with pydantic schemas and
+  TestClient tests. Headline findings come from `metrics.headline_findings`.
 
 Update this section when a phase completes.
 
@@ -53,6 +54,7 @@ Update this section when a phase completes.
 .venv/Scripts/python -m pytest -q                              # tests
 .venv/Scripts/ruff check . && .venv/Scripts/ruff format --check .
 .venv/Scripts/python -m scripts.ingest                         # re-fetch data (network)
+.venv/Scripts/python -m scripts.analyse                        # full Section 6 analysis
 ```
 
 Use `python -m scripts.ingest`, not `python scripts/ingest.py`: the script

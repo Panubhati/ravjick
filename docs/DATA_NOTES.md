@@ -81,3 +81,30 @@ should be presented that way.
 
 Golden example (Section 4.3) reproduced: for delivery 2026-01-03 at cutoff
 09:00, the latest eligible publish is 2026-01-02T07:30Z and covers 24 of 24 hours.
+
+## Headline findings (Phase 4)
+
+Reproduce with `python -m scripts.analyse` from `backend/` (cutoff 09:00, 1 to 31 January).
+
+- Across 31 delivery days (744 hours), the forecast available at the 09:00 cutoff on the day before was off by 2,142 MW on average. That is 18.5% of average wind output (11,581 MW). RMSE is 2,612 MW.
+- On average the forecast was 1,852 MW too high. Wind came in below forecast in 85% of hours, and on 27 of 31 days the forecast was too high on average.
+- To be covered in 9 hours out of 10, plan for up to 4,300 MW less wind than forecast (5,307 MW for 19 hours out of 20).
+- Errors are largest at 05:00 (2,535 MW), 03:00 (2,516 MW) and 04:00 (2,507 MW) UTC, and smallest at 21:00 (1,883 MW). The over-forecast is larger overnight (bias about 2,400 MW at 02:00 to 06:00) than in the afternoon (about 1,400 MW).
+- The worst day was 28 January (average miss 5,375 MW). The best was 19 January (736 MW, and one of only 4 days with a negative bias).
+- By wind level, the average miss is 1,886 MW when wind is low (up to 9,367 MW), 2,097 MW when medium and 2,443 MW when high (above 14,670 MW).
+- Average miss by how far ahead the forecast was made: 0-6h 1,791 MW, 6-12h 1,846 MW, 12-24h 2,005 MW, 24-36h 2,136 MW, 36-48h 2,351 MW, 48h+ 2,381 MW. Accuracy gets steadily worse with lead time.
+- The forecast is too high at every lead time, even 0 to 6 hours ahead (by 1,558 MW on average), so the over-forecast is not only a long-range effect.
+- The cutoff matters little. Moving it from 06:00 to 12:00 changes the average miss from 2,139 MW to 2,018 MW and the 90% buffer from 4,329 MW to 4,001 MW. From 06:00 to 11:00 the average miss stays within 2,123 to 2,142 MW.
+- A naive guess ("same as two days earlier") misses by 4,303 MW on average over the same 744 hours, against 2,142 MW for the forecast. The forecast halves the error.
+- Caveat: this is a small sample (31 delivery days in one winter month). Errors in neighbouring hours move together, so there are far fewer independent data points than hours. Treat these figures as indicative, not as long-run guarantees.
+
+Note on percentiles: the absolute and signed P90 and P95 are identical (4,300 and 5,307 MW), because every one of the largest 10% of misses is an over-forecast. The largest under-forecast is 3,550 MW.
+
+### Open question: why is the forecast too high so consistently?
+
+A bias of about +1.5 GW even for forecasts made 0 to 6 hours ahead looks more like the two datasets measuring slightly different things than like forecasting skill. Possible explanations, **none verified**:
+
+- The two datasets may not cover exactly the same set of wind farms.
+- The actuals may reflect output after wind farms were told to reduce output (curtailment), while the forecast may describe what the wind could have produced. The bias is larger at high wind, which fits this explanation.
+
+Checking either one needs Elexon documentation or other datasets, both outside the agreed scope. Until then, the portal reports errors exactly as defined, and the buffer includes this bias, which is the right number for a buyer who relies on this forecast.
