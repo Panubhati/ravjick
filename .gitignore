@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+
+# Local-only working files (phase 1 exploration, spec document)
+/featch.py
+/data/
+*.docx
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
