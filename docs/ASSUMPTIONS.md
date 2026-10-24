@@ -46,3 +46,16 @@ gives the phase it was made in and how it was checked.
 | C6 | The baseline is the actual at the same hour two days earlier. It is compared with the forecast on exactly the same hours. | Spec 6.4. The D-2 actual is fully known at a D-1 morning cutoff. |
 | C7 | The findings describe how consistent the bias is (share of hours and days over-forecast) but include no significance test. | Errors in neighbouring hours are strongly correlated, so a naive test would overstate certainty. The caveat sentence says so. |
 | C8 | `n_missing_actual` counts every hour in the range with no actual, including hours that also have no forecast. | No hours are missing in January, so this has no effect on results. |
+
+## Phase 5: API
+
+| # | Assumption | How checked or why |
+|---|---|---|
+| D1 | The API accepts any valid `HH:MM` cutoff (00:00 to 23:59). The UI offers only 06:00 to 12:00. | Spec 8 only requires the HH:MM format. The selection logic works for any time. Malformed values return 422. |
+| D2 | The shortfall buffer in `/api/decision-forecast` comes from the January errors at the *same cutoff* as the request. | Spec 8: "based on the whole-January error distribution". Using the same cutoff keeps the buffer consistent with the forecast shown. |
+| D3 | `/api/error-by-horizon` and `/api/cutoff-sensitivity` take no cutoff parameter. | By definition they use all forecasts, or all cutoffs. |
+| D4 | `from` and `to` default to the whole of January. `delivery_date` is required. A range where `from` is after `to` returns 422. | Spec 9.2: the default range is the whole month. |
+| D5 | Results are cached in memory for each (range, cutoff). | The data is static. The first full `/api/metrics` call takes about 1.5 s; repeat calls are instant. |
+| D6 | `CORS_ORIGINS` (comma-separated) defaults to `http://localhost:5173`, the Vite dev server. `STATIC_DIR` defaults to `frontend/dist`, which is only mounted if it exists. | Spec 8: CORS origins come from the environment. |
+| D7 | Our own range errors return 422 with a string `detail`. FastAPI's format errors return 422 with a list `detail`. | Both are 422, as spec 8 requires. The front end displays either kind. |
+| D8 | Metric fields keep the metrics-module names (`mae`, `bias`, `buffer_90`), with MW stated in the OpenAPI descriptions. Per-hour values use a `_mw` suffix. | This keeps names identical across code, API and docs. |

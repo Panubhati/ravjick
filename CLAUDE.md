@@ -41,9 +41,10 @@ available at the D-1 decision cutoff and quantifies forecast error.
 - Phase 1 (discovery): done.
 - Phase 2 (ingestion): done, commit `6b14483`.
 - Phase 3 (core logic): done, commit `d28d5fe`.
-- Phase 4 (metrics): done. `app/metrics.py`, `app/data_loader.py`, `scripts/analyse.py`.
-- Next: Phase 5, FastAPI endpoints (spec Section 8) with pydantic schemas and
-  TestClient tests. Headline findings come from `metrics.headline_findings`.
+- Phase 4 (metrics): done, commit `f8853fd`.
+- Phase 5 (API): done. `app/main.py`, `routes.py`, `schemas.py`; 73 tests.
+- Next: Phase 6, React + Vite + TypeScript + Recharts front end (spec Section 9)
+  against the real API. Typed client mirrors `app/schemas.py`.
 
 Update this section when a phase completes.
 
@@ -55,6 +56,7 @@ Update this section when a phase completes.
 .venv/Scripts/ruff check . && .venv/Scripts/ruff format --check .
 .venv/Scripts/python -m scripts.ingest                         # re-fetch data (network)
 .venv/Scripts/python -m scripts.analyse                        # full Section 6 analysis
+.venv/Scripts/python -m uvicorn app.main:app --reload          # API on :8000, docs at /docs
 ```
 
 Use `python -m scripts.ingest`, not `python scripts/ingest.py`: the script

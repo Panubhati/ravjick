@@ -1,5 +1,6 @@
 """Project-wide constants. All times are UTC (equal to UK time in January)."""
 
+import os
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 
@@ -27,3 +28,17 @@ PROCESSED_DIR = Path(__file__).resolve().parent.parent / "data" / "processed"
 ACTUALS_CSV = PROCESSED_DIR / "actuals_half_hourly.csv"
 BASELINE_ACTUALS_CSV = PROCESSED_DIR / "actuals_half_hourly_baseline.csv"
 FORECASTS_CSV = PROCESSED_DIR / "forecasts.csv"
+
+# Web server settings, read from the environment.
+# Comma-separated list of origins allowed to call the API from a browser.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+# Folder with the built front end. If it exists, it is served at "/".
+STATIC_DIR = Path(
+    os.environ.get(
+        "STATIC_DIR", Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    )
+)

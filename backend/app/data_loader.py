@@ -1,5 +1,8 @@
 """Load the processed CSV files written by scripts/ingest.py."""
 
+from dataclasses import dataclass
+from functools import cache
+
 import pandas as pd
 
 from app import config
@@ -26,3 +29,20 @@ def load_hourly_actuals() -> pd.DataFrame:
         ignore_index=True,
     )
     return hourly_actuals(half_hourly)
+
+
+@dataclass(frozen=True)
+class Dataset:
+    forecasts: pd.DataFrame
+    hourly_actuals: pd.DataFrame
+    n_half_hourly_actuals: int
+
+
+@cache
+def get_dataset() -> Dataset:
+    """Load everything once and keep it in memory. The data never changes."""
+    return Dataset(
+        forecasts=load_forecasts(),
+        hourly_actuals=load_hourly_actuals(),
+        n_half_hourly_actuals=len(load_half_hourly_actuals()),
+    )
