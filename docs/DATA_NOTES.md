@@ -100,11 +100,55 @@ Reproduce with `python -m scripts.analyse` from `backend/` (cutoff 09:00, 1 to 3
 
 Note on percentiles: the absolute and signed P90 and P95 are identical (4,300 and 5,307 MW), because every one of the largest 10% of misses is an over-forecast. The largest under-forecast is 3,550 MW.
 
-### Open question: why is the forecast too high so consistently?
+### Uncertainty of the headline numbers
 
-A bias of about +1.5 GW even for forecasts made 0 to 6 hours ahead looks more like the two datasets measuring slightly different things than like forecasting skill. Possible explanations, **none verified**:
+90% ranges from resampling whole delivery days (1,000 resamples, seed 0; `metrics.bootstrap_ci`). Whole days are resampled because errors in neighbouring hours move together:
 
-- The two datasets may not cover exactly the same set of wind farms.
-- The actuals may reflect output after wind farms were told to reduce output (curtailment), while the forecast may describe what the wind could have produced. The bias is larger at high wind, which fits this explanation.
+| Metric (09:00 cutoff) | Value | 90% range |
+|---|---|---|
+| MAE | 2,142 MW | 1,789 to 2,544 MW |
+| Bias | +1,852 MW | +1,406 to +2,340 MW |
+| 90% shortfall buffer | 4,300 MW | 3,433 to 5,285 MW |
 
-Checking either one needs Elexon documentation or other datasets, both outside the agreed scope. Until then, the portal reports errors exactly as defined, and the buffer includes this bias, which is the right number for a buyer who relies on this forecast.
+The bias is clearly above zero even at the bottom of its range. The buffer, however, could plausibly be anywhere from about 3.4 to 5.3 GW on this sample.
+
+### Why is the forecast too high so consistently? (documentation research)
+
+A bias of about +1.5 GW even for forecasts made 0 to 6 hours ahead looks more like the two datasets measuring slightly different things than like poor forecasting. We researched the documentation only; no new datasets were used.
+
+**A coverage mismatch is not supported.** Both datasets are documented as covering wind farms with operational metering, which excludes embedded (distribution-connected) wind:
+
+- WINDFOR: "This provides wind generation forecast for wind farms which are visible to the ESO and have operational metering." (Elexon Insights API specification, https://data.elexon.co.uk/swagger/v1/swagger.json)
+- FUELHH: National Grid's generation-by-fuel-type data uses "half-hourly operational metering", and "generation units connected to the low voltage distribution system ('embedded' generation) are excluded from operational metering." (DECC Energy Trends article, September 2012, https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/65923/6487-nat-grid-metering-data-et-article-sep12.pdf)
+
+Small differences in exactly which wind farms are included remain possible but are not documented.
+
+**Curtailment is the likely cause, but not proven.**
+
+- When NESO measures the accuracy of its own day-ahead wind forecast, it compares against metered output only for sites that "did not have a bid-offer acceptance (BOA)", i.e. sites that were not instructed to change output (NESO RIIO-2 BP2 Incentives Report, November 2024, metric 1C, https://www.neso.energy/document/350301/download). This suggests the forecast predicts output *before* curtailment, while FUELHH records metered output *after* it.
+- Curtailment is large: "In 2024/25, wind curtailment volumes increased to 13% of hypothetical wind outturn (wind outturn if no curtailment had taken place)" (NESO Annual Balancing Costs Report 2025, https://www.neso.energy/document/362561/download).
+
+13% of ~11.6 GW would be about 1.5 GW, roughly the size of the bias, and curtailment is concentrated at high wind, where our bias is largest. These two points are our inference, not a documented fact. No document says outright that WINDFOR is an unconstrained forecast.
+
+**How it could be proven later (outside the current scope):** add curtailed volumes back to FUELHH, for example from bid-offer acceptance data for wind units, and check whether the gap closes.
+
+**What the portal does:** it reports errors exactly as defined. The buffer therefore includes this bias, which is the right number for a buyer who relies on this forecast as published. The Methodology panel describes curtailment as the likely, unproven cause.
+
+### Possible publish-time offset (not resolved)
+
+The same API specification says WINDFOR is "published by NGESO up to 8 times a day at 03:30, 05:30, 08:30, 10:30, 12:30, 16:30, 19:30 and 23:30". Our data carries `publishTime` values exactly one hour earlier: 02:30, 04:30, 07:30 and so on, in UTC. The documented times may be UK summer time (BST = UTC+1), which would match our data exactly. We have not confirmed this.
+
+If instead forecasts became available an hour after their `publishTime`, the cutoffs at 08:00, 10:00 and 12:00 would be using forecasts that were not yet available, i.e. look-ahead. **The default 09:00 cutoff is safe either way**: its forecast is stamped 07:30, which is no later than 08:30 even with the offset. The 06:00, 07:00 and 11:00 cutoffs are also safe.
+
+### Extras: look-ahead check and buffer without hindsight (09:00 cutoff)
+
+| | At the 09:00 cutoff (what the buyer had) | Newest forecast before each hour (look-ahead) |
+|---|---|---|
+| MAE | 2,142 MW | 1,814 MW |
+| Bias | +1,852 MW | +1,608 MW |
+| 90% buffer | 4,300 MW | 3,781 MW |
+| Median hours ahead | 28 | 1.5 |
+
+Peeking at later forecasts would make the forecast look about 15% more accurate. The portal never does this.
+
+**Buffer without hindsight.** Each day's buffer was built only from errors of days up to D-2. It averaged 4,104 MW and covered the shortfall in 86% of hours, against a 90% target, over 30 days. The first days are weak: on 2 January only two December days of history were available, so the buffer was 1,183 MW and covered none of that day's 24 hours. From 3 January it stays between 3,852 and 4,749 MW. A live service would want a longer history before relying on it.

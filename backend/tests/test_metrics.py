@@ -9,6 +9,7 @@ import pytest
 from app.metrics import (
     baseline_comparison,
     bias,
+    bootstrap_ci,
     build_pairs,
     by_day,
     by_hour,
@@ -16,9 +17,11 @@ from app.metrics import (
     cutoff_sensitivity,
     error_by_horizon,
     headline_findings,
+    look_ahead_comparison,
     mae,
     overall_metrics,
     rmse,
+    rolling_buffer_backtest,
     run_analysis,
     shortfall_buffer,
 )
@@ -296,3 +299,153 @@ def test_run_analysis_and_findings_on_synthetic_month():
     assert "100 MW" in text  # MAE and buffer both 100 MW
     assert "2 delivery days" in text
     assert "small sample" in text
+
+
+# ------------------------------------------------- bootstrap confidence ranges
+
+
+def test_bootstrap_ci_is_zero_width_when_every_day_is_identical():
+    errors = [100.0, -50.0, 200.0, -250.0]
+    pairs = pairs_frame(
+        [
+            (f"2026-01-0{d}T{h:02d}:00", 1000 + e, 1000)
+            for d in (3, 4, 5)
+            for h, e in enumerate(errors)
+        ]
+    )
+    ci = bootstrap_ci(pairs)
+    assert ci["mae"] == pytest.approx([150, 150])
+    assert ci["bias"] == pytest.approx([0, 0])
+    # 12 errors (4 values x 3 days): the 90th percentile is 200.
+    buffer = overall_metrics(pairs)["buffer_90"]
+    assert buffer == 200
+    assert ci["buffer_90"] == pytest.approx([buffer, buffer])
+
+
+def test_bootstrap_ci_is_reproducible_with_a_seed():
+    pairs = pairs_frame(
+        [
+            (f"2026-01-{d:02d}T00:00", 1000 + 37 * d * (-1) ** d, 1000)
+            for d in range(1, 21)
+        ]
+    )
+    assert bootstrap_ci(pairs, seed=1) == bootstrap_ci(pairs, seed=1)
+    low, high = bootstrap_ci(pairs, seed=1)["mae"]
+    assert low < high
+
+
+def test_bootstrap_ci_none_without_matched_pairs():
+    assert bootstrap_ci(pairs_frame([("2026-01-03T00:00", np.nan, 1000)])) is None
+
+
+def test_bootstrap_ci_contains_point_estimates_on_real_data(real_forecasts):
+    from app.data_loader import load_hourly_actuals
+
+    pairs = build_pairs(
+        real_forecasts,
+        load_hourly_actuals(),
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        time(9, 0),
+    )
+    overall = overall_metrics(pairs)
+    ci = bootstrap_ci(pairs)
+    for key in ("mae", "bias", "buffer_90"):
+        low, high = ci[key]
+        assert low <= overall[key] <= high
+
+
+# ------------------------------------------- look-ahead (peeking) comparison
+
+
+def test_look_ahead_comparison_uses_newer_forecasts_only_on_the_cheating_side():
+    target = "2026-01-03T12:00"
+    fc = pd.DataFrame(
+        [
+            # Available at the 09:00 cutoff on 2 Jan.
+            {
+                "publish_time": ts("2026-01-02T07:30"),
+                "start_time": ts(target),
+                "generation_mw": 1200,
+            },
+            # Published later, but before delivery: a buyer could not have used it.
+            {
+                "publish_time": ts("2026-01-03T10:00"),
+                "start_time": ts(target),
+                "generation_mw": 1050,
+            },
+            # Published after the hour began: never counts as a forecast.
+            {
+                "publish_time": ts("2026-01-03T13:00"),
+                "start_time": ts(target),
+                "generation_mw": 1000,
+            },
+        ]
+    )
+    hourly = pd.DataFrame([{"target_time": ts(target), "actual_mw": 1000}])
+    pairs = build_pairs(fc, hourly, date(2026, 1, 3), date(2026, 1, 3), time(9, 0))
+    out = look_ahead_comparison(pairs, fc, hourly, date(2026, 1, 3), date(2026, 1, 3))
+    assert out["at_cutoff"]["mae"] == 200
+    assert out["at_cutoff"]["median_horizon_h"] == 28.5
+    assert out["latest_before_delivery"]["mae"] == 50
+    assert out["latest_before_delivery"]["bias"] == 50
+    assert out["latest_before_delivery"]["median_horizon_h"] == 2
+    assert out["latest_before_delivery"]["n"] == 1
+
+
+# --------------------------------------- shortfall buffer without hindsight
+
+
+def one_hour_per_day(errors: dict[str, float]) -> pd.DataFrame:
+    return pairs_frame([(f"{day}T12:00", 1000 + e, 1000) for day, e in errors.items()])
+
+
+def test_rolling_buffer_uses_only_days_known_at_the_cutoff():
+    pairs = one_hour_per_day(
+        {
+            "2026-01-01": 100,
+            "2026-01-02": 200,
+            "2026-01-03": 300,
+            "2026-01-04": 50,
+            "2026-01-05": 400,
+        }
+    )
+    days, summary = rolling_buffer_backtest(
+        pairs, date(2026, 1, 1), date(2026, 1, 5), min_history_days=2
+    )
+    by_day = days.set_index("delivery_date")
+    # 1-3 Jan: fewer than 2 complete earlier days (D-2 or before) -> no buffer.
+    assert by_day.loc[date(2026, 1, 3), "buffer_mw"] is None or pd.isna(
+        by_day.loc[date(2026, 1, 3), "buffer_mw"]
+    )
+    # 4 Jan: history = 1-2 Jan [100, 200] -> 90th percentile 190; error 50 covered.
+    assert by_day.loc[date(2026, 1, 4), "buffer_mw"] == pytest.approx(190)
+    assert by_day.loc[date(2026, 1, 4), "covered_hours"] == 1
+    # 5 Jan: history = 1-3 Jan [100, 200, 300] -> 280; error 400 not covered.
+    assert by_day.loc[date(2026, 1, 5), "buffer_mw"] == pytest.approx(280)
+    assert by_day.loc[date(2026, 1, 5), "covered_hours"] == 0
+    assert summary["n_days"] == 2
+    assert summary["coverage_pct"] == 50
+    assert summary["mean_buffer_mw"] == pytest.approx(235)
+
+
+def test_rolling_buffer_ignores_the_future():
+    base = {"2026-01-01": 100, "2026-01-02": 200, "2026-01-03": 300}
+    a, _ = rolling_buffer_backtest(
+        one_hour_per_day(base), date(2026, 1, 3), date(2026, 1, 3), 1
+    )
+    b, _ = rolling_buffer_backtest(
+        one_hour_per_day(base | {"2026-01-04": 99999}),
+        date(2026, 1, 3),
+        date(2026, 1, 3),
+        1,
+    )
+    assert a["buffer_mw"].tolist() == b["buffer_mw"].tolist()
+
+
+def test_rolling_buffer_is_never_negative():
+    pairs = one_hour_per_day(
+        {"2026-01-01": -100, "2026-01-02": -200, "2026-01-03": -50}
+    )
+    days, _ = rolling_buffer_backtest(pairs, date(2026, 1, 3), date(2026, 1, 3), 1)
+    assert days["buffer_mw"].tolist() == [0]

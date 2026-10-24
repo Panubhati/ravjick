@@ -194,19 +194,26 @@ def cutoff_sensitivity(
     cutoffs: list[time],
 ) -> pd.DataFrame:
     """Recompute MAE, bias and the 90% buffer for each cutoff (Section 6.2)."""
-    rows = []
-    for cutoff in cutoffs:
-        m = overall_metrics(build_pairs(forecasts, hourly, date_from, date_to, cutoff))
-        rows.append(
-            {
-                "cutoff": cutoff.strftime("%H:%M"),
-                "mae": m["mae"],
-                "bias": m["bias"],
-                "buffer_90": m["buffer_90"],
-                "n": m["n"],
-            }
-        )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        [
+            sensitivity_row(
+                cutoff, build_pairs(forecasts, hourly, date_from, date_to, cutoff)
+            )
+            for cutoff in cutoffs
+        ]
+    )
+
+
+def sensitivity_row(cutoff: time, pairs: pd.DataFrame) -> dict:
+    """One row of the cutoff sensitivity table, from that cutoff's pairs."""
+    m = overall_metrics(pairs)
+    return {
+        "cutoff": cutoff.strftime("%H:%M"),
+        "mae": m["mae"],
+        "bias": m["bias"],
+        "buffer_90": m["buffer_90"],
+        "n": m["n"],
+    }
 
 
 def error_by_horizon(
@@ -252,6 +259,135 @@ def baseline_comparison(pairs: pd.DataFrame, hourly: pd.DataFrame) -> dict:
     }
 
 
+def bootstrap_ci(
+    pairs: pd.DataFrame, n_resamples: int = 1000, seed: int = 0, level: float = 0.90
+) -> dict | None:
+    """How uncertain are MAE, bias and the 90% buffer, given only a month of data?
+
+    Resamples whole delivery days with replacement and recomputes each
+    statistic. Whole days are resampled, not single hours, because errors in
+    neighbouring hours move together. Returns [low, high] ranges at `level`.
+    """
+    m = matched(pairs)
+    if m.empty:
+        return None
+    days = [g.to_numpy() for _, g in m.groupby(m["target_time"].dt.date)["error_mw"]]
+    rng = np.random.default_rng(seed)
+    stats: dict[str, list[float]] = {"mae": [], "bias": [], "buffer_90": []}
+    for _ in range(n_resamples):
+        picks = rng.integers(len(days), size=len(days))
+        errors = np.concatenate([days[i] for i in picks])
+        stats["mae"].append(np.abs(errors).mean())
+        stats["bias"].append(errors.mean())
+        stats["buffer_90"].append(max(0.0, np.quantile(errors, 0.90)))
+    tail = (1 - level) / 2
+    return {"level": level} | {
+        key: [float(np.quantile(values, tail)), float(np.quantile(values, 1 - tail))]
+        for key, values in stats.items()
+    }
+
+
+def look_ahead_comparison(
+    pairs: pd.DataFrame,
+    forecasts: pd.DataFrame,
+    hourly: pd.DataFrame,
+    date_from: date,
+    date_to: date,
+) -> dict:
+    """How much better would the numbers look if we "cheated"?
+
+    Compares the forecast available at the cutoff (`pairs`) with the newest
+    forecast published before each hour began. A buyer could never have used
+    the latter for a day-ahead decision. The gap shows how much look-ahead
+    leakage would flatter the accuracy figures.
+    """
+    start = pd.Timestamp(datetime.combine(date_from, time(0, 0), UTC))
+    end = pd.Timestamp(datetime.combine(date_to + timedelta(days=1), time(0, 0), UTC))
+    fc = forecasts[
+        (forecasts["start_time"] >= start)
+        & (forecasts["start_time"] < end)
+        & (forecasts["publish_time"] < forecasts["start_time"])
+    ]
+    latest = fc.sort_values("publish_time").groupby("start_time").tail(1)
+    latest = latest.merge(hourly, left_on="start_time", right_on="target_time")
+    latest = latest.dropna(subset=["actual_mw"])
+    latest_errors = latest["generation_mw"] - latest["actual_mw"]
+    latest_horizon = (
+        latest["start_time"] - latest["publish_time"]
+    ).dt.total_seconds() / 3600
+
+    def side(errors: pd.Series, horizon_h: pd.Series) -> dict:
+        if errors.empty:
+            return dict.fromkeys(["mae", "bias", "buffer_90", "median_horizon_h"]) | {
+                "n": 0
+            }
+        return {
+            "mae": mae(errors),
+            "bias": bias(errors),
+            "buffer_90": shortfall_buffer(errors, 0.90),
+            "median_horizon_h": float(horizon_h.median()),
+            "n": len(errors),
+        }
+
+    m = matched(pairs)
+    return {
+        "at_cutoff": side(m["error_mw"], m["horizon_h"]),
+        "latest_before_delivery": side(latest_errors, latest_horizon),
+    }
+
+
+def rolling_buffer_backtest(
+    pairs: pd.DataFrame,
+    date_from: date,
+    date_to: date,
+    min_history_days: int = 2,
+    level: float = 0.90,
+) -> tuple[pd.DataFrame, dict]:
+    """A shortfall buffer built without hindsight, and how often it worked.
+
+    For delivery day D the decision is made on the morning of D-1, when the
+    errors of D-1 itself are not yet complete. So D's buffer uses only the
+    errors of days up to D-2 (an expanding window). `pairs` may start before
+    `date_from` to provide that history. Each day then checks whether actual
+    wind stayed within the buffer (error <= buffer), hour by hour.
+    """
+    m = matched(pairs)
+    day = m["target_time"].dt.date
+    rows = []
+    for d in delivery_days(date_from, date_to):
+        history = m.loc[day <= d - timedelta(days=2), "error_mw"]
+        n_history_days = day[day <= d - timedelta(days=2)].nunique()
+        today = m.loc[day == d, "error_mw"]
+        if n_history_days < min_history_days or today.empty:
+            buffer, covered = float("nan"), float("nan")
+        else:
+            buffer = max(0.0, float(history.quantile(level)))
+            covered = int((today <= buffer).sum())
+        rows.append(
+            {
+                "delivery_date": d,
+                "buffer_mw": buffer,
+                "covered_hours": covered,
+                "n_hours": len(today),
+            }
+        )
+    days = pd.DataFrame(rows)
+    used = days.dropna(subset=["buffer_mw"])
+    n_hours = int(used["n_hours"].sum())
+    summary = {
+        "level": level,
+        "target_pct": round(100 * level),
+        "min_history_days": min_history_days,
+        "n_days": len(used),
+        "n_hours": n_hours,
+        "coverage_pct": float(100 * used["covered_hours"].sum() / n_hours)
+        if n_hours
+        else None,
+        "mean_buffer_mw": float(used["buffer_mw"].mean()) if len(used) else None,
+    }
+    return days, summary
+
+
 # --------------------------------------------------------------------------
 # Full analysis and findings
 # --------------------------------------------------------------------------
@@ -264,10 +400,31 @@ def run_analysis(
     date_to: date,
     cutoff: time,
     sensitivity_cutoffs: list[time] | None = None,
+    *,
+    pairs: pd.DataFrame | None = None,
+    horizon: pd.DataFrame | None = None,
+    sensitivity: pd.DataFrame | None = None,
+    history_pairs: pd.DataFrame | None = None,
 ) -> dict:
-    """Everything in Section 6 for one date range and cutoff."""
-    pairs = build_pairs(forecasts, hourly, date_from, date_to, cutoff)
+    """Everything in Section 6 for one date range and cutoff, plus extras.
+
+    `pairs`, `horizon` and `sensitivity` may be passed in when the caller has
+    already computed them (the API caches them); otherwise they are computed.
+    `history_pairs` are pairs starting earlier than `date_from`, used as past
+    errors by the no-hindsight buffer; by default only `pairs` are used.
+    """
+    if pairs is None:
+        pairs = build_pairs(forecasts, hourly, date_from, date_to, cutoff)
+    if horizon is None:
+        horizon = error_by_horizon(forecasts, hourly, date_from, date_to)
+    if sensitivity is None:
+        sensitivity = cutoff_sensitivity(
+            forecasts, hourly, date_from, date_to, sensitivity_cutoffs or [cutoff]
+        )
     wind_levels, thresholds = by_wind_level(pairs)
+    rolling_days, rolling_summary = rolling_buffer_backtest(
+        pairs if history_pairs is None else history_pairs, date_from, date_to
+    )
     return {
         "date_from": date_from,
         "date_to": date_to,
@@ -275,15 +432,19 @@ def run_analysis(
         "n_days": len(delivery_days(date_from, date_to)),
         "pairs": pairs,
         "overall": overall_metrics(pairs),
+        "overall_ci": bootstrap_ci(pairs),
         "by_hour": by_hour(pairs),
         "by_wind_level": wind_levels,
         "wind_thresholds": thresholds,
         "by_day": by_day(pairs),
-        "by_horizon": error_by_horizon(forecasts, hourly, date_from, date_to),
-        "cutoff_sensitivity": cutoff_sensitivity(
-            forecasts, hourly, date_from, date_to, sensitivity_cutoffs or [cutoff]
-        ),
+        "by_horizon": horizon,
+        "cutoff_sensitivity": sensitivity,
         "baseline": baseline_comparison(pairs, hourly),
+        "look_ahead": look_ahead_comparison(
+            pairs, forecasts, hourly, date_from, date_to
+        ),
+        "rolling_buffer": rolling_summary,
+        "rolling_buffer_days": rolling_days,
     }
 
 
@@ -294,11 +455,19 @@ def headline_findings(results: dict) -> list[str]:
     cutoff = results["cutoff"].strftime("%H:%M")
     if not o["n"]:
         return ["No hours with both a forecast and an actual in this range."]
+    ci = results.get("overall_ci")
+
+    def ci_text(key: str) -> str:
+        if not ci:
+            return ""
+        low, high = ci[key]
+        return f" (90% range {low:,.0f} to {high:,.0f} MW)"
 
     findings = [
         f"Across {n_days} delivery days ({o['n']} hours), the forecast available "
-        f"at the {cutoff} cutoff on the day before was off by {o['mae']:,.0f} MW "
-        f"on average. That is {o['nmae_pct']:.1f}% of average wind output "
+        f"at the {cutoff} cutoff on the day before was off by "
+        f"{o['mae']:,.0f} MW on average{ci_text('mae')}. That is "
+        f"{o['nmae_pct']:.1f}% of average wind output "
         f"({o['mean_actual_mw']:,.0f} MW).",
     ]
 
@@ -309,16 +478,40 @@ def headline_findings(results: dict) -> list[str]:
     days_over = int((days["bias"] > 0).sum())
     direction = "too high" if o["bias"] > 0 else "too low"
     findings.append(
-        f"On average the forecast was {abs(o['bias']):,.0f} MW {direction}. "
-        f"Wind came in below forecast in {pct_over:.0f}% of hours, and on "
-        f"{days_over} of {len(days)} days the forecast was too high on average."
+        f"On average the forecast was {abs(o['bias']):,.0f} MW "
+        f"{direction}{ci_text('bias')}. Wind came in below forecast in "
+        f"{pct_over:.0f}% of hours, and on {days_over} of {len(days)} days the "
+        f"forecast was too high on average."
     )
 
     findings.append(
         f"To be covered in 9 hours out of 10, plan for up to "
-        f"{o['buffer_90']:,.0f} MW less wind than forecast "
-        f"({o['buffer_95']:,.0f} MW for 19 hours out of 20)."
+        f"{o['buffer_90']:,.0f} MW less wind than forecast{ci_text('buffer_90')}. "
+        f"To be covered in 19 hours out of 20, plan for {o['buffer_95']:,.0f} MW. "
+        f"This shortfall buffer is worked out after the fact over the whole period, "
+        f"so treat it as a guide; a live system would use past errors only."
     )
+
+    rolling = results.get("rolling_buffer")
+    if rolling and rolling["n_days"]:
+        findings.append(
+            f"Built only from errors already known at each decision (no "
+            f"hindsight), the 90% shortfall buffer averaged "
+            f"{rolling['mean_buffer_mw']:,.0f} MW and covered the shortfall in "
+            f"{rolling['coverage_pct']:.0f}% of hours, against a "
+            f"{rolling['target_pct']}% target ({rolling['n_days']} days tested)."
+        )
+
+    look = results.get("look_ahead")
+    if look and look["latest_before_delivery"]["n"]:
+        cheat = look["latest_before_delivery"]
+        findings.append(
+            f"Using forecasts published after the cutoff, which a buyer could "
+            f"not have had, would make the average miss look like "
+            f"{cheat['mae']:,.0f} MW instead of {o['mae']:,.0f} MW. The portal "
+            f"never does this: it always shows the forecast as it stood at the "
+            f"cutoff."
+        )
 
     hours = results["by_hour"].dropna(subset=["mae"]).sort_values("mae")
     worst = hours.tail(3).iloc[::-1]
@@ -358,18 +551,19 @@ def headline_findings(results: dict) -> list[str]:
         if (horizon["bias"] > 0).all():
             shortest = horizon.iloc[0]
             findings.append(
-                f"The forecast is too high at every lead time, even "
+                f"The forecast is too high however far in advance it is made, even "
                 f"{shortest.bucket} ahead (by {shortest.bias:,.0f} MW on average), "
-                f"so the over-forecast is not only a long-range effect."
+                f"so this is not just a problem with long-range forecasts."
             )
 
     sens = results["cutoff_sensitivity"].dropna(subset=["mae"])
     if len(sens) > 1:
         first, last = sens.iloc[0], sens.iloc[-1]
         findings.append(
-            f"Moving the cutoff from {first.cutoff} to {last.cutoff} changes the "
-            f"average miss from {first.mae:,.0f} MW to {last.mae:,.0f} MW and the "
-            f"90% buffer from {first.buffer_90:,.0f} MW to {last.buffer_90:,.0f} MW."
+            f"Moving the cutoff from {first.cutoff} to {last.cutoff} changes "
+            f"the average miss from {first.mae:,.0f} MW to {last.mae:,.0f} MW and "
+            f"the shortfall buffer from {first.buffer_90:,.0f} MW to "
+            f"{last.buffer_90:,.0f} MW."
         )
 
     b = results["baseline"]
@@ -383,7 +577,8 @@ def headline_findings(results: dict) -> list[str]:
     findings.append(
         f"Caveat: this is a small sample ({n_days} delivery days in one winter "
         f"month). Errors in neighbouring hours move together, so there are far "
-        f"fewer independent data points than hours. Treat these figures as "
-        f"indicative, not as long-run guarantees."
+        f"fewer independent data points than hours. The 90% ranges above come "
+        f"from resampling whole days. Treat these figures as indicative, not as "
+        f"long-run guarantees."
     )
     return findings

@@ -56,6 +56,13 @@ class DecisionForecast(BaseModel):
     buffer_95_mw: float | None
     buffer_basis: BufferBasis
     day_mae_mw: float | None = Field(description="This day's mean absolute error")
+    bias_mw: float | None = Field(
+        description="Mean signed error over January at this cutoff (+ = too high)"
+    )
+    rolling_buffer_90_mw: float | None = Field(
+        description="90% buffer built only from errors known at this day's cutoff "
+        "(days up to D-2). Null when there is not enough history."
+    )
 
 
 class SeriesPoint(BaseModel):
@@ -133,17 +140,65 @@ class Baseline(BaseModel):
     baseline_mae: float | None
 
 
+class ConfidenceRanges(BaseModel):
+    """Ranges from resampling whole delivery days (bootstrap)."""
+
+    level: float = Field(description="Coverage of each range, e.g. 0.9")
+    mae: list[float] = Field(description="[low, high]")
+    bias: list[float]
+    buffer_90: list[float]
+
+
+class LookAheadSide(BaseModel):
+    mae: float | None
+    bias: float | None
+    buffer_90: float | None
+    median_horizon_h: float | None
+    n: int
+
+
+class LookAhead(BaseModel):
+    """The forecast at the cutoff vs the newest forecast before each hour began
+    (which a buyer could not have used: look-ahead leakage)."""
+
+    at_cutoff: LookAheadSide
+    latest_before_delivery: LookAheadSide
+
+
+class RollingBufferDay(BaseModel):
+    delivery_date: date
+    buffer_mw: float | None = Field(description="Null when history is too short")
+    covered_hours: int | None = Field(description="Hours with error <= buffer")
+    n_hours: int
+
+
+class RollingBuffer(BaseModel):
+    """90% shortfall buffer built without hindsight, and how often it worked."""
+
+    level: float
+    target_pct: int
+    min_history_days: int
+    n_days: int = Field(description="Days with enough history to be tested")
+    n_hours: int
+    coverage_pct: float | None = Field(description="Share of hours covered")
+    mean_buffer_mw: float | None
+    days: list[RollingBufferDay]
+
+
 class Metrics(BaseModel):
     date_from: date
     date_to: date
     cutoff: str
     overall: OverallMetrics
+    overall_ci: ConfidenceRanges | None
     by_hour: list[HourSlice]
     by_wind_level: list[WindLevelSlice]
     wind_thresholds: WindThresholds | None
     by_day: list[DaySlice]
     data_quality: DataQuality
     baseline: Baseline
+    look_ahead: LookAhead
+    rolling_buffer: RollingBuffer
     findings: list[str]
 
 

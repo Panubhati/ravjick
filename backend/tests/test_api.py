@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app import config
 from app.main import app
 
 client = TestClient(app)
@@ -156,3 +157,95 @@ def test_range_endpoints_reject_out_of_range_dates(path):
 def test_range_endpoints_reject_reversed_range(path):
     body = assert_422(path, **{"from": "2026-01-10", "to": "2026-01-05"})
     assert "from" in body["detail"]
+
+
+# ------------------------------------------------ improvement pass (F-items)
+
+
+@pytest.mark.parametrize("cutoff", ["13:00", "09:30", "05:00"])
+def test_cutoff_must_be_one_of_the_listed_options(cutoff):
+    body = assert_422(
+        "/api/decision-forecast", delivery_date="2026-01-03", cutoff=cutoff
+    )
+    assert "06:00" in body["detail"] and "12:00" in body["detail"]
+
+
+def test_decision_forecast_includes_january_bias():
+    body = get("/api/decision-forecast", delivery_date="2026-01-03")
+    assert body["bias_mw"] == pytest.approx(1851.9, abs=0.1)
+
+
+def test_metrics_include_confidence_ranges():
+    body = get("/api/metrics")
+    ci = body["overall_ci"]
+    assert ci["level"] == 0.9
+    for key in ("mae", "bias", "buffer_90"):
+        low, high = ci[key]
+        assert low <= body["overall"][key] <= high
+
+
+def test_responses_are_gzipped_when_accepted():
+    response = client.get("/api/series", headers={"Accept-Encoding": "gzip"})
+    assert response.headers["content-encoding"] == "gzip"
+
+
+def test_security_headers_on_api():
+    headers = client.get("/api/health").headers
+    assert headers["x-content-type-options"] == "nosniff"
+    assert headers["x-frame-options"] == "DENY"
+    assert headers["referrer-policy"] == "no-referrer"
+    assert "default-src 'self'" in headers["content-security-policy"]
+
+
+def test_docs_page_has_no_csp_so_swagger_can_load():
+    response = client.get("/docs")
+    assert response.status_code == 200
+    assert "content-security-policy" not in response.headers
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.skipif(
+    not (config.STATIC_DIR / "assets").is_dir(), reason="front end not built"
+)
+def test_static_cache_headers():
+    asset = next((config.STATIC_DIR / "assets").iterdir()).name
+    assert "immutable" in client.get(f"/assets/{asset}").headers["cache-control"]
+    assert client.get("/").headers["cache-control"] == "no-cache"
+
+
+# ------------------------------------------------------------- extras
+
+
+def test_metrics_include_look_ahead_comparison():
+    look = get("/api/metrics")["look_ahead"]
+    assert look["at_cutoff"]["n"] == 744
+    assert look["latest_before_delivery"]["n"] == 744
+    # Peeking at later forecasts makes the error look smaller.
+    assert look["latest_before_delivery"]["mae"] < look["at_cutoff"]["mae"]
+    assert (
+        look["latest_before_delivery"]["median_horizon_h"]
+        < look["at_cutoff"]["median_horizon_h"]
+    )
+
+
+def test_metrics_include_rolling_buffer_backtest():
+    rolling = get("/api/metrics")["rolling_buffer"]
+    assert rolling["target_pct"] == 90
+    assert 0 <= rolling["coverage_pct"] <= 100
+    # 1 Jan has only one complete earlier day (30 Dec), so 30 days are evaluated.
+    assert rolling["n_days"] == 30
+    assert len(rolling["days"]) == 31
+    assert rolling["days"][0]["buffer_mw"] is None
+
+
+def test_decision_forecast_includes_rolling_buffer():
+    assert (
+        get("/api/decision-forecast", delivery_date="2026-01-01")[
+            "rolling_buffer_90_mw"
+        ]
+        is None
+    )
+    value = get("/api/decision-forecast", delivery_date="2026-01-15")[
+        "rolling_buffer_90_mw"
+    ]
+    assert value is not None and value >= 0

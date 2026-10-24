@@ -51,7 +51,7 @@ gives the phase it was made in and how it was checked.
 
 | # | Assumption | How checked or why |
 |---|---|---|
-| D1 | The API accepts any valid `HH:MM` cutoff (00:00 to 23:59). The UI offers only 06:00 to 12:00. | Spec 8 only requires the HH:MM format. The selection logic works for any time. Malformed values return 422. |
+| D1 | *(Revised in the improvement pass, see F1.)* The API originally accepted any valid `HH:MM` cutoff. | Spec 8 only requires the HH:MM format. |
 | D2 | The shortfall buffer in `/api/decision-forecast` comes from the January errors at the *same cutoff* as the request. | Spec 8: "based on the whole-January error distribution". Using the same cutoff keeps the buffer consistent with the forecast shown. |
 | D3 | `/api/error-by-horizon` and `/api/cutoff-sensitivity` take no cutoff parameter. | By definition they use all forecasts, or all cutoffs. |
 | D4 | `from` and `to` default to the whole of January. `delivery_date` is required. A range where `from` is after `to` returns 422. | Spec 9.2: the default range is the whole month. |
@@ -59,3 +59,41 @@ gives the phase it was made in and how it was checked.
 | D6 | `CORS_ORIGINS` (comma-separated) defaults to `http://localhost:5173`, the Vite dev server. `STATIC_DIR` defaults to `frontend/dist`, which is only mounted if it exists. | Spec 8: CORS origins come from the environment. |
 | D7 | Our own range errors return 422 with a string `detail`. FastAPI's format errors return 422 with a list `detail`. | Both are 422, as spec 8 requires. The front end displays either kind. |
 | D8 | Metric fields keep the metrics-module names (`mae`, `bias`, `buffer_90`), with MW stated in the OpenAPI descriptions. Per-hour values use a `_mw` suffix. | This keeps names identical across code, API and docs. |
+
+## Phase 6: front end
+
+| # | Assumption | How checked or why |
+|---|---|---|
+| E1 | The Decision Planner opens on delivery day 15 January at the 09:00 cutoff. | A mid-month day that shows a typical forecast. The user can change both. |
+| E2 | The cutoff and the date range are shared across the three views. | Switching tabs keeps the user's choices, so the views stay consistent. |
+| E3 | The shaded band runs from forecast − 90% buffer up to the forecast, and never goes below 0 MW. | Spec 9.1. Wind output cannot be negative. |
+| E4 | The error histogram uses 500 MW bins, built in the browser from `/api/series`. | This avoids an extra endpoint. 744 values are a small payload. |
+| E5 | Date pickers are the browser's native date input, so the date format follows the viewer's locale (for example 15-01-2026). Every time shown in text and charts is formatted in UTC. | Native inputs are accessible and work on phones. Times never use the viewer's local time zone. |
+| E6 | The Methodology panel mentions the unexplained over-forecast (see DATA_NOTES, open question) as a known caveat. | Honest reporting. It does not claim a cause. |
+| E7 | In development, Vite forwards `/api` to `http://localhost:8000`. `VITE_API_BASE_URL` is empty when one server hosts both the front end and the API. | Spec 9.4. |
+
+## Improvement pass (performance, security, UI, accuracy)
+
+| # | Assumption | How checked or why |
+|---|---|---|
+| F1 | The API accepts only the 7 listed cutoffs (06:00 to 12:00 on the hour). Other well-formed times return 422 and list the allowed values. | This limits the work any request can cause: an attacker could otherwise keep the server busy with new cutoff values. It also matches the UI. Agreed with the project owner. |
+| F2 | 90% confidence ranges for MAE, bias and the 90% buffer come from resampling whole delivery days (1,000 resamples, fixed seed 0, so results are repeatable). | Whole days are resampled, not single hours, because errors in neighbouring hours move together. Unit-tested on hand-made data. |
+| F3 | The shortfall buffer stays calibrated on the whole of January, as the spec asks. It is labelled as a hindsight estimate in the UI, the findings and the Methodology panel. | Using errors from days after the decision is look-ahead. A live system would use only errors already known at decision time. |
+| F4 | The "Typical bias" card on the Planner shows the January bias at the selected cutoff. | It tells the buyer the forecast usually ran high, which a single buffer number hides. |
+| F5 | Results for the default range are computed at start-up (about 2.3 s). Other ranges are computed on first request and cached. | This keeps first page loads fast. Hosting platforms allow far longer start-up times. |
+| F6 | Responses over 1 KB are gzipped. Hashed static assets are cached for a year; `index.html` is always revalidated. | Standard practice. Asset file names change on every build. |
+| F7 | Security headers: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and a strict Content-Security-Policy. The CSP allows inline styles because the chart library needs them. `/docs` and `/redoc` are exempt from the CSP. | Swagger UI loads its scripts from a CDN, and the spec requires `/docs` to work. The browser check showed no CSP violations. |
+| F8 | The browser keeps successful API responses for the life of the page, and forgets failed ones so Retry works. | The data is static. Switching tabs makes no new requests (verified). |
+| F9 | The view (tab, date, cutoff, range) is mirrored in the URL. Invalid values fall back to defaults one field at a time. | Links can be shared and bookmarked, which also helps in the demo video. |
+| F10 | Back-end direct dependencies are pinned to exact versions. | Builds are reproducible and auditable. npm already uses `package-lock.json`. |
+| F11 | The bias explanation is based on documentation only: coverage mismatch not supported, curtailment likely but unproven. See DATA_NOTES, which also records an unresolved one-hour offset between documented and observed publish times (the default 09:00 cutoff is safe either way). | No new datasets were added, in line with the agreed scope. |
+| F12 | Headings named in the spec are used exactly as written: the views (Decision Planner, Forecast Performance, Error Insights), the Methodology panel, the banner wording, the KPI labels (Peak forecast hour, Average forecast, Shortfall buffer (90%), MAE, RMSE, Bias, Normalised MAE), Hourly values, Key findings and the Error Insights chart titles. Subtitles, hints, explanations and the footer use plain language for non-technical buyers. | Requested by the project owner: keep spec headings, explain them in everyday words. |
+
+## Extras (beyond the spec)
+
+| # | Assumption | How checked or why |
+|---|---|---|
+| G1 | Look-ahead check: the "cheating" comparison uses, for each target hour, the newest forecast published strictly before the hour began (horizon > 0). | It shows what look-ahead leakage would do to the numbers. Unit-tested. Real data: MAE 1,814 MW vs 2,142 MW at the 09:00 cutoff. |
+| G2 | Buffer without hindsight: for delivery day D, the 90% buffer uses the decision errors of all days up to D-2. D-1 is not yet complete at a morning cutoff. The window grows over time, and the 30-31 December decisions provide the first history. At least 2 complete earlier days are required, so 1 January has no value. | No look-ahead. Unit-tested, including that future days never change an earlier buffer. Real data: average 4,104 MW, covered 86% of hours against a 90% target over 30 days. |
+| G3 | Buy calculator: demand is one flat MW figure for all 24 hours, entered by the user (default 30,000 MW, an example only). Buy = demand − forecast; with buffer = demand − max(0, forecast − buffer). Hours with no forecast count on no wind. Daily totals are in MWh (hourly MW summed). | This turns the example in spec Section 2 into a tool. No price or demand data is added; the user supplies the demand figure. |
+| G4 | Key findings show the first 4 sentences plus the closing small-sample caveat, with "Show all" for the rest. On the Decision Planner the KPI cards stay above the chart (the project owner preferred them as a summary at the top), and the buy calculator is collapsed by default. After 4 s of loading, a note says the server may be waking up. | UX pass: lead with the main message, keep the honesty caveat always visible, and handle cold starts on free hosting (spec Section 12). |

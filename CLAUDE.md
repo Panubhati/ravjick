@@ -42,9 +42,13 @@ available at the D-1 decision cutoff and quantifies forecast error.
 - Phase 2 (ingestion): done, commit `6b14483`.
 - Phase 3 (core logic): done, commit `d28d5fe`.
 - Phase 4 (metrics): done, commit `f8853fd`.
-- Phase 5 (API): done. `app/main.py`, `routes.py`, `schemas.py`; 73 tests.
-- Next: Phase 6, React + Vite + TypeScript + Recharts front end (spec Section 9)
-  against the real API. Typed client mirrors `app/schemas.py`.
+- Phase 5 (API): done, commit `82ed422`.
+- Phase 6 (front end): done, commit `ca86bae`.
+- Improvement pass (perf, security, UI, honest stats): done, commit `c8c20ec`.
+- UI wording: spec headings kept exactly; plain-language subtitles, hints, footer (ASSUMPTIONS F12). Do not rename spec headings.
+- Extras: look-ahead check, buffer without hindsight, buy calculator (ASSUMPTIONS G1-G3).
+- Next: Phase 7, Docker (multi-stage) + docker-compose + Heroku container deploy
+  (spec Section 12). Server must bind to $PORT (default 8000).
 
 Update this section when a phase completes.
 
@@ -80,3 +84,19 @@ imports `app.config`, so it only works when run as a module.
 - `decision.py` must stay pure: no web-framework imports.
 - Python 3.12, pandas, pydantic v2, pytest, ruff (config in
   `backend/pyproject.toml`). Line endings are LF (`.gitattributes`).
+
+## Front end (run from `frontend/`)
+
+```sh
+npm install
+npm run dev     # http://localhost:5173, proxies /api to :8000 (start uvicorn first)
+npm test        # Vitest unit tests for src/lib
+npm run build   # type-check + production build to frontend/dist
+```
+
+- `src/api/types.ts` mirrors `backend/app/schemas.py`; keep them in sync.
+- Pure helpers live in `src/lib/` and are unit-tested; pages are in `src/pages/`.
+- When `frontend/dist` exists, FastAPI serves it at `/` (see `STATIC_DIR`).
+- API only accepts the 7 listed cutoffs (06:00-12:00); others return 422.
+- On the development machine, port 8000 is taken by another local service. Run
+  uvicorn on another port (for example `--port 8765`) for local checks.

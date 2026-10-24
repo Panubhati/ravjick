@@ -1,6 +1,7 @@
 """API endpoints (spec Section 8). All under /api; see main.py.
 
-The data is static, so results are cached per (date range, cutoff).
+The data is static, so results are cached per (date range, cutoff). Only the
+listed cutoffs are accepted, which bounds the work any request can cause.
 """
 
 import json
@@ -12,9 +13,16 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from app import config, schemas
+from app import metrics as metrics_module
 from app.data_loader import get_dataset
 from app.decision import cutoff_datetime
-from app.metrics import build_pairs, headline_findings, overall_metrics, run_analysis
+from app.metrics import (
+    build_pairs,
+    headline_findings,
+    overall_metrics,
+    run_analysis,
+    sensitivity_row,
+)
 
 router = APIRouter()
 
@@ -28,6 +36,7 @@ CutoffParam = Annotated[
 FromParam = Annotated[date, Query(alias="from", description="First delivery day")]
 ToParam = Annotated[date, Query(alias="to", description="Last delivery day")]
 DEFAULT_CUTOFF = config.DEFAULT_CUTOFF.strftime("%H:%M")
+CUTOFF_OPTIONS = [c.strftime("%H:%M") for c in config.CUTOFF_OPTIONS]
 
 
 # --------------------------------------------------------------------------
@@ -53,6 +62,16 @@ def check_range(date_from: date, date_to: date) -> None:
         )
 
 
+def parse_cutoff(cutoff: str) -> time:
+    if cutoff not in CUTOFF_OPTIONS:
+        raise HTTPException(
+            422,
+            f"Cutoff {cutoff} is not supported: use one of "
+            f"{', '.join(CUTOFF_OPTIONS)}.",
+        )
+    return time.fromisoformat(cutoff)
+
+
 def records(df: pd.DataFrame) -> list[dict]:
     """DataFrame -> JSON-safe dicts (NaN/NaT become None, numpy types become
     plain Python)."""
@@ -74,8 +93,37 @@ def cached_analysis(date_from: date, date_to: date, cutoff: time) -> dict:
         date_from,
         date_to,
         cutoff,
-        sensitivity_cutoffs=config.CUTOFF_OPTIONS,
+        pairs=cached_pairs(date_from, date_to, cutoff),
+        horizon=cached_horizon(date_from, date_to),
+        sensitivity=cached_sensitivity(date_from, date_to),
+        # Earlier days (from 30 Dec) give the no-hindsight buffer its history.
+        history_pairs=cached_pairs(config.BASELINE_ACTUALS_FROM, date_to, cutoff),
     )
+
+
+@lru_cache(maxsize=64)
+def cached_horizon(date_from: date, date_to: date) -> pd.DataFrame:
+    data = get_dataset()
+    return metrics_module.error_by_horizon(
+        data.forecasts, data.hourly_actuals, date_from, date_to
+    )
+
+
+@lru_cache(maxsize=64)
+def cached_sensitivity(date_from: date, date_to: date) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            sensitivity_row(cutoff, cached_pairs(date_from, date_to, cutoff))
+            for cutoff in config.CUTOFF_OPTIONS
+        ]
+    )
+
+
+def warm_caches() -> None:
+    """Compute the default views at start-up so first requests are fast."""
+    cached_analysis(config.MIN_DATE, config.MAX_DATE, config.DEFAULT_CUTOFF)
+    cached_horizon(config.MIN_DATE, config.MAX_DATE)
+    cached_sensitivity(config.MIN_DATE, config.MAX_DATE)
 
 
 # --------------------------------------------------------------------------
@@ -96,7 +144,7 @@ def meta() -> schemas.Meta:
         min_date=config.MIN_DATE,
         max_date=config.MAX_DATE,
         default_cutoff=DEFAULT_CUTOFF,
-        cutoff_options=[c.strftime("%H:%M") for c in config.CUTOFF_OPTIONS],
+        cutoff_options=CUTOFF_OPTIONS,
         timezone="UTC",
         data_notes=[
             "Source: Elexon BMRS. Actuals are FUELHH (fuel type WIND); forecasts "
@@ -119,12 +167,16 @@ def decision_forecast(
 ) -> schemas.DecisionForecast:
     """The forecast available at the cutoff on D-1 for each hour of the day."""
     check_dates(delivery_date)
-    cutoff_time = time.fromisoformat(cutoff)
+    cutoff_time = parse_cutoff(cutoff)
     month = cached_pairs(config.MIN_DATE, config.MAX_DATE, cutoff_time)
     day = month[month["target_time"].dt.date == delivery_date]
     month_metrics = overall_metrics(month)
     day_metrics = overall_metrics(day)
     available = day.dropna(subset=["publish_time"])
+    rolling = cached_analysis(config.MIN_DATE, config.MAX_DATE, cutoff_time)[
+        "rolling_buffer_days"
+    ].set_index("delivery_date")["buffer_mw"]
+    rolling_buffer = rolling.get(delivery_date)
 
     return schemas.DecisionForecast(
         delivery_date=delivery_date,
@@ -144,6 +196,8 @@ def decision_forecast(
             n=month_metrics["n"],
         ),
         day_mae_mw=day_metrics["mae"],
+        bias_mw=month_metrics["bias"],
+        rolling_buffer_90_mw=None if pd.isna(rolling_buffer) else rolling_buffer,
     )
 
 
@@ -155,7 +209,7 @@ def series(
 ) -> schemas.Series:
     """Hourly decision forecast, actual and error over a date range."""
     check_range(date_from, date_to)
-    pairs = cached_pairs(date_from, date_to, time.fromisoformat(cutoff))
+    pairs = cached_pairs(date_from, date_to, parse_cutoff(cutoff))
     return schemas.Series(
         date_from=date_from, date_to=date_to, cutoff=cutoff, points=records(pairs)
     )
@@ -169,7 +223,7 @@ def metrics(
 ) -> schemas.Metrics:
     """Overall error metrics, slices and headline findings (spec Section 6)."""
     check_range(date_from, date_to)
-    results = cached_analysis(date_from, date_to, time.fromisoformat(cutoff))
+    results = cached_analysis(date_from, date_to, parse_cutoff(cutoff))
     overall = results["overall"]
     by_day = results["by_day"].assign(
         delivery_date=results["by_day"]["delivery_date"].astype(str)
@@ -179,6 +233,7 @@ def metrics(
         date_to=date_to,
         cutoff=cutoff,
         overall=overall,
+        overall_ci=results["overall_ci"],
         by_hour=records(results["by_hour"]),
         by_wind_level=records(results["by_wind_level"]),
         wind_thresholds=results["wind_thresholds"] if overall["n"] else None,
@@ -190,6 +245,17 @@ def metrics(
             n_missing_actual=overall["n_missing_actual"],
         ),
         baseline=results["baseline"],
+        look_ahead=results["look_ahead"],
+        rolling_buffer=results["rolling_buffer"]
+        | {
+            "days": records(
+                results["rolling_buffer_days"].assign(
+                    delivery_date=results["rolling_buffer_days"][
+                        "delivery_date"
+                    ].astype(str)
+                )
+            )
+        },
         findings=headline_findings(results),
     )
 
@@ -200,9 +266,10 @@ def error_by_horizon(
 ) -> schemas.ErrorByHorizon:
     """Accuracy by lead time, using every forecast with horizon > 0."""
     check_range(date_from, date_to)
-    results = cached_analysis(date_from, date_to, config.DEFAULT_CUTOFF)
     return schemas.ErrorByHorizon(
-        date_from=date_from, date_to=date_to, buckets=records(results["by_horizon"])
+        date_from=date_from,
+        date_to=date_to,
+        buckets=records(cached_horizon(date_from, date_to)),
     )
 
 
@@ -212,9 +279,8 @@ def cutoff_sensitivity(
 ) -> schemas.CutoffSensitivity:
     """MAE, bias and 90% buffer for each cutoff from 06:00 to 12:00."""
     check_range(date_from, date_to)
-    results = cached_analysis(date_from, date_to, config.DEFAULT_CUTOFF)
     return schemas.CutoffSensitivity(
         date_from=date_from,
         date_to=date_to,
-        rows=records(results["cutoff_sensitivity"]),
+        rows=records(cached_sensitivity(date_from, date_to)),
     )
