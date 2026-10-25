@@ -9,6 +9,7 @@ gives the phase it was made in and how it was checked.
 |---|---|---|
 | S1 | All times are UTC. In January this equals UK local time (GMT). | Confirmed: all API timestamps end in `Z`. |
 | S2 | The default decision cutoff is 09:00 UTC on D-1, adjustable from 06:00 to 12:00. | Day-ahead auctions close on the morning of D-1. |
+| S3 | "Purchase decisions to be made in January 2026" (challenge brief) is read as delivery days 1 to 31 January, so decisions are made from 31 December to 30 January. | Matches the build specification. One calendar month of outcomes is easier to read, and shifting the window by one day would not change the conclusions. |
 
 ## Phase 2: ingestion
 
