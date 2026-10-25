@@ -115,7 +115,7 @@ frontend/
   src/components/ shared UI, controls, Methodology panel
 api/index.py      Vercel entry point (wraps the same FastAPI app)
 docs/             ARCHITECTURE.md, ASSUMPTIONS.md, DATA_NOTES.md
-Dockerfile, docker-compose.yml, heroku.yml, vercel.json
+Dockerfile, docker-compose.yml, vercel.json
 .github/workflows/ci.yml
 ```
 
@@ -137,8 +137,8 @@ this, a Docker build and dependency audits on every push.
 
 The app is deployed on **Vercel**: the React build is served as static files and FastAPI runs as
 a Python serverless function with the CSVs bundled (`vercel.json`, `api/index.py`). Heroku, the
-spec's primary target, no longer has a free plan; `heroku.yml` is included so the same Docker
-image can be deployed there with `heroku stack:set container` and `git push heroku main`.
+spec's primary target, no longer has a free plan, so it is not used. The Docker image runs on
+any container host.
 
 **First load:** after a period without visitors the function starts cold. In testing (from
 outside the US), API calls took about 1–2 s on a cold start and 0.3–1 s once warm; the page

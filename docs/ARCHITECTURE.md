@@ -72,7 +72,6 @@ React + TypeScript + Vite + Recharts.
 - **Vercel (live):** `vercel.json` builds the front end as static files and routes `/api`, `/docs`
   and `/openapi.json` to `api/index.py`, a Python function wrapping the same FastAPI app with the
   CSVs bundled. Security headers for static files are set in `vercel.json`.
-- **Heroku:** `heroku.yml` deploys the same Docker image on the container stack.
 
 ## Quality
 

@@ -1,5 +1,0 @@
-# Heroku container stack: heroku stack:set container, then git push heroku main.
-# Heroku sets $PORT; the Dockerfile's CMD binds to it.
-build:
-  docker:
-    web: Dockerfile
